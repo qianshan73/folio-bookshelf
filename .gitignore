@@ -1,0 +1,13 @@
+node_modules/
+data/
+runtime/
+release/
+test-results/
+playwright-report/
+*.folio
+*.log
+*.sqlite*
+.env
+.DS_Store
+Thumbs.db
+docs/screenshots/mobile-settings.png

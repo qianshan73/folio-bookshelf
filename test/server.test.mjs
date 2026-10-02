@@ -7,7 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const root = process.env.FOLIO_TEST_ROOT
+  ? path.resolve(process.env.FOLIO_TEST_ROOT)
+  : path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 let dir, child, base, token, copyId, pathId, backup;
 async function launch(dataDir) {
   const p = spawn(process.execPath, [path.join(root, "server.mjs")], {
@@ -431,6 +433,189 @@ test("pasted text selects extension, normalizes filename and indexes custom text
     false,
   );
 });
+test("standalone reader assets and individual metadata are available", async () => {
+  assert.equal((await fetch(base + "/reader.html?book=" + copyId)).status, 200);
+  assert.equal((await fetch(base + "/reader.js")).status, 200);
+  assert.equal((await fetch(base + "/reading.js")).status, 200);
+  const b = (await call(`/api/books/${copyId}`)).data;
+  assert.equal(b.book.id, copyId);
+  assert.ok(b.token);
+  assert.equal(b.book.excerpt, undefined);
+});
+
+test("saved destinations and batch preflight handle collisions, missing files and mixed kinds", async () => {
+  const folder = path.join(dir, "bulk"),
+    destination = path.join(dir, "reading-home");
+  await fs.mkdir(path.join(folder, "a"), { recursive: true });
+  await fs.mkdir(path.join(folder, "b"));
+  await fs.mkdir(destination);
+  const a = path.join(folder, "a", "故事.txt"),
+    b = path.join(folder, "b", "故事.txt"),
+    missing = path.join(folder, "失联.txt");
+  await fs.writeFile(a, "第一份故事");
+  await fs.writeFile(b, "第二份故事");
+  await fs.writeFile(missing, "missing");
+  await fs.writeFile(path.join(destination, "故事.txt"), "已有故事");
+  await call("/api/import-path", "POST", { paths: [a, b, missing] });
+  const all = (await call("/api/state")).data.books,
+    ids = [a, b, missing].map((p) => all.find((b) => b.source === p).id);
+  await fs.unlink(missing);
+  assert.equal(
+    (await call("/api/places", "POST", { directory: "relative" })).status,
+    400,
+  );
+  const place = (
+    await call("/api/places", "POST", {
+      name: "我的阅读角",
+      directory: destination,
+    })
+  ).data;
+  const renamed = (
+    await call("/api/places", "POST", {
+      name: "阅读角",
+      directory: destination,
+    })
+  ).data;
+  assert.equal(renamed.id, place.id);
+  assert.equal((await call("/api/state")).data.places.length, 1);
+  const preview = (
+    await call("/api/move-plan", "POST", {
+      ids: [...ids, copyId],
+      place_id: place.id,
+    })
+  ).data;
+  assert.deepEqual(
+    preview.entries.map((e) => e.status),
+    ["ready", "ready", "error", "error"],
+  );
+  assert.equal(path.basename(preview.entries[0].destination), "故事 (2).txt");
+  assert.equal(path.basename(preview.entries[1].destination), "故事 (3).txt");
+  await fs.access(a);
+  await fs.access(b); // Preview never moves anything.
+  assert.equal(
+    (await call("/api/move-execute", "POST", { plan_id: preview.id })).status,
+    400,
+  );
+  const r = (
+    await call("/api/move-execute", "POST", {
+      plan_id: preview.id,
+      confirm: true,
+    })
+  ).data;
+  assert.equal(r.moved, 2);
+  assert.equal(
+    await fs.readFile(path.join(destination, "故事.txt"), "utf8"),
+    "已有故事",
+  );
+  assert.equal(
+    await fs.readFile(path.join(destination, "故事 (2).txt"), "utf8"),
+    "第一份故事",
+  );
+  await assert.rejects(fs.access(a));
+  assert.equal(
+    (await call("/api/state")).data.books.find((b) => b.id === ids[0]).source,
+    preview.entries[0].destination,
+  );
+  assert.equal(
+    (
+      await call("/api/move-execute", "POST", {
+        plan_id: preview.id,
+        confirm: true,
+      })
+    ).status,
+    400,
+  );
+  const skip = (
+    await call("/api/move-plan", "POST", {
+      ids: ids.slice(0, 2),
+      directory: destination,
+    })
+  ).data;
+  assert.ok(skip.entries.every((e) => e.status === "skip"));
+  assert.equal(
+    (await call(`/api/move-batches/${r.batch_id}/undo`, "POST", {})).data
+      .undone,
+    2,
+  );
+  assert.equal(
+    (await call(`/api/move-batches/${r.batch_id}/undo`, "POST", {})).data
+      .undone,
+    0,
+  );
+  assert.equal(await fs.readFile(a, "utf8"), "第一份故事");
+  assert.equal(await fs.readFile(b, "utf8"), "第二份故事");
+  const backupWithPlace = (await call("/api/backup")).data;
+  assert.equal(backupWithPlace.places[0].name, "阅读角");
+  assert.equal(
+    (await call("/api/restore", "POST", backupWithPlace)).status,
+    200,
+  );
+  assert.equal((await call("/api/state")).data.places.length, 1);
+});
+
+test("batch execution rejects stale files, new collisions and duplicate concurrent execution", async () => {
+  const folder = path.join(dir, "stale"),
+    target = path.join(dir, "stale-target");
+  await fs.mkdir(folder);
+  await fs.mkdir(target);
+  const paths = ["changed.txt", "collision.txt", "good.txt"].map((n) =>
+    path.join(folder, n),
+  );
+  for (const p of paths) await fs.writeFile(p, "original");
+  await call("/api/import-path", "POST", { paths });
+  const books = (await call("/api/state")).data.books;
+  const ids = paths.map((p) => books.find((b) => b.source === p).id);
+  const plan = (
+    await call("/api/move-plan", "POST", { ids, directory: target })
+  ).data;
+  await fs.writeFile(paths[0], "changed after preview");
+  await fs.writeFile(path.join(target, "collision.txt"), "new occupant");
+  const outcomes = await Promise.all(
+    [1, 2].map(() =>
+      call("/api/move-execute", "POST", { plan_id: plan.id, confirm: true }),
+    ),
+  );
+  assert.deepEqual(outcomes.map((r) => r.status).sort(), [200, 400]);
+  const r = outcomes.find((r) => r.status === 200).data;
+  assert.equal(r.moved, 1);
+  assert.deepEqual(
+    r.entries.map((e) => e.status),
+    ["error", "error", "moved"],
+  );
+  assert.equal(await fs.readFile(paths[0], "utf8"), "changed after preview");
+  assert.equal(await fs.readFile(paths[1], "utf8"), "original");
+  assert.equal(
+    await fs.readFile(path.join(target, "collision.txt"), "utf8"),
+    "new occupant",
+  );
+  // An old batch must never undo a newer single move of this file.
+  await call(`/api/books/${ids[2]}/move`, "POST", {
+    directory: folder,
+    filename: "later.txt",
+    confirm: true,
+  });
+  const undo = (await call(`/api/move-batches/${r.batch_id}/undo`, "POST", {}))
+    .data;
+  assert.equal(undo.undone, 0);
+  assert.equal(undo.errors.length, 1);
+  await fs.access(path.join(folder, "later.txt"));
+  await call(`/api/books/${ids[2]}/undo-move`, "POST", {});
+  await fs.writeFile(paths[2], "do not overwrite me");
+  const collisionUndo = (
+    await call(`/api/move-batches/${r.batch_id}/undo`, "POST", {})
+  ).data;
+  assert.equal(collisionUndo.undone, 0);
+  assert.equal(collisionUndo.errors.length, 1);
+  assert.equal(await fs.readFile(paths[2], "utf8"), "do not overwrite me");
+  await fs.unlink(paths[2]);
+  assert.equal(
+    (await call(`/api/move-batches/${r.batch_id}/undo`, "POST", {})).data
+      .undone,
+    1,
+  );
+  assert.equal(await fs.readFile(paths[2], "utf8"), "original");
+});
+
 test("state survives a complete server restart", async () => {
   child.kill();
   await once(child, "exit");
@@ -442,4 +627,6 @@ test("state survives a complete server restart", async () => {
   assert.equal(b.title, "重新命名");
   assert.equal(b.favorite, 1);
   assert.equal(b.color, "#42594d");
+  assert.equal((await call("/api/state")).data.places[0].name, "阅读角");
+  assert.ok((await call("/api/state")).data.moveBatches.length >= 2);
 });

@@ -23,6 +23,13 @@
         ><span>我的私人藏书室<small>只属于你的知识角落</small></span>
       </div>
       <nav id="navigation">
+        <button class="nav-item" data-view="local">
+          <span data-icon="folder"></span>本地原文件<span
+            class="count"
+            id="local-count"
+            >0</span
+          >
+        </button>
         <button class="nav-item active" data-view="all">
           <span data-icon="books"></span>全部藏品<span
             class="count"
@@ -71,7 +78,7 @@
         </div>
         <button class="nav-item" data-action="settings">
           <span data-icon="settings"></span>偏好与备份</button
-        ><small class="ai-note">Made with care & AI · v1.0.1</small>
+        ><small class="ai-note">Made with care & AI · v1.1.0</small>
       </div>
     </aside>
     <main>
@@ -154,10 +161,39 @@
             ><span class="caption-divider"></span
             ><span id="shelf-hint">拖动书籍调整顺序，拖到分类即可归档</span>
           </div>
+          <button class="text-button" data-action="manage-files">
+            <span data-icon="folder"></span>整理原文件
+          </button>
           <button class="text-button" data-action="refresh">
             <span data-icon="refresh"></span>检查文件
           </button>
         </div>
+        <div id="continue-reading" class="continue-reading" hidden></div>
+        <section
+          id="file-organizer"
+          class="file-organizer"
+          hidden
+          aria-label="快捷整理原文件"
+        >
+          <div>
+            <strong>勾选文件，放到同一个地方</strong>
+            <p class="helper">实际移动原文件，不是复制；书柜会跟着更新位置。</p>
+          </div>
+          <div class="organizer-actions">
+            <button class="secondary" data-action="select-local">
+              全选当前原文件</button
+            ><button class="text-button" data-action="clear-selection">
+              清空选择</button
+            ><span id="selected-count">已选 0 份</span
+            ><button class="primary" data-action="organize-selected">
+              选择去处 / 预览移动</button
+            ><button class="secondary" data-action="places">常用文件夹</button
+            ><button class="text-button" data-action="manage-files">
+              收起整理
+            </button>
+          </div>
+          <div id="recent-moves"></div>
+        </section>
         <div id="books" class="bookshelf" aria-live="polite"></div>
         <div id="empty" class="empty-state" hidden>
           <span data-icon="books"></span>
@@ -198,8 +234,8 @@
         </button>
       </div>
       <div class="tabs" id="import-tabs">
-        <button class="active" data-import-tab="upload">文件副本</button
-        ><button data-import-tab="path">本地路径</button
+        <button data-import-tab="path">本地原文件（推荐）</button
+        ><button class="active" data-import-tab="upload">保存副本</button
         ><button data-import-tab="folder">文件夹</button
         ><button data-import-tab="link">网络链接</button
         ><button data-import-tab="note">粘贴文字</button>
@@ -237,6 +273,103 @@
         ><button data-detail-tab="location">位置</button>
       </div>
       <div id="detail-content"></div>
+    </dialog>
+    <dialog id="move-dialog" class="modal move-modal">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">A HOME FOR YOUR FILES</p>
+          <h2>把原文件放到一起</h2>
+        </div>
+        <button
+          class="icon-button"
+          data-action="close-modal"
+          aria-label="关闭整理"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <p id="move-selection" class="helper"></p>
+      <div class="form-field">
+        <label for="move-place">常用去处</label
+        ><select id="move-place"></select>
+      </div>
+      <div class="form-field">
+        <label for="batch-directory">目标文件夹</label>
+        <div class="path-line">
+          <input
+            id="batch-directory"
+            placeholder="选择现有文件夹，不用记住路径"
+          /><button type="button" class="secondary" data-action="browse-batch">
+            选择文件夹
+          </button>
+        </div>
+      </div>
+      <div class="organizer-actions">
+        <button class="text-button" data-action="save-current-place">
+          记住这个去处</button
+        ><button class="secondary" data-action="preview-move">预览移动</button>
+      </div>
+      <p class="helper">
+        不会覆盖同名文件：会自动加 (2)、(3)
+        等序号。文件已在目标位置则跳过。只整理你选择的原文件。
+      </p>
+      <div id="move-preview" class="move-preview" aria-live="polite"></div>
+      <div class="modal-footer">
+        <span id="move-status">先选择去处，再预览；预览不会移动文件。</span
+        ><button
+          class="primary"
+          id="execute-move"
+          data-action="execute-move"
+          disabled
+        >
+          确认移动原文件
+        </button>
+      </div>
+    </dialog>
+    <dialog id="places-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <h2>常用文件夹</h2>
+          <p class="helper">起个好记的名字，下一次直接选。</p>
+        </div>
+        <button
+          class="icon-button"
+          data-action="close-modal"
+          aria-label="关闭常用文件夹"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <form id="place-form">
+        <div class="form-field">
+          <label for="place-name">名称</label
+          ><input
+            id="place-name"
+            required
+            maxlength="80"
+            placeholder="例如：我的阅读角、重要资料"
+          />
+        </div>
+        <div class="form-field">
+          <label for="place-directory">文件夹</label>
+          <div class="path-line">
+            <input
+              id="place-directory"
+              required
+              placeholder="选择现有文件夹"
+            /><button
+              type="button"
+              class="secondary"
+              data-action="browse-place"
+            >
+              选择文件夹
+            </button>
+          </div>
+        </div>
+        <button class="primary" type="submit">记住这个文件夹</button>
+      </form>
+      <div id="places-list" class="places-list"></div>
+      <p class="helper">忘记去处只删除快捷入口，不会删除文件夹或里面的文件。</p>
     </dialog>
     <dialog id="settings-dialog" class="modal">
       <div class="modal-heading">

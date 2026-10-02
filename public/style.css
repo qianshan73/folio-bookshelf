@@ -1869,6 +1869,355 @@ a.secondary {
   justify-content: center;
   gap: 7px;
 }
+
+/* Reading and real-file organization stay separate from shelf categories. */
+.continue-reading,
+.file-organizer {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+}
+.continue-reading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.continue-reading > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.continue-reading .text-button {
+  flex-shrink: 0;
+}
+a.text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+}
+.organizer-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.organizer-actions button {
+  font-size: 13px;
+}
+.book-select {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.book-select input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
+}
+.book-read-tab {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 25px;
+  width: 30px;
+  color: var(--green);
+  border-radius: 5px;
+  background: var(--panel);
+}
+.book-read-tab svg {
+  width: 15px;
+  height: 15px;
+}
+.list-view .book-read-tab {
+  top: 6px;
+  right: 5px;
+}
+.list-view .book-select {
+  top: auto;
+  bottom: 4px;
+  left: 96px;
+}
+.recent-move,
+.place-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.recent-move:first-child {
+  margin-top: 15px;
+}
+.recent-move > span,
+.place-item > div {
+  flex: 1;
+  min-width: 0;
+}
+.recent-move code,
+.place-item code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.place-item button,
+.recent-move button {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.places-list {
+  margin-top: 24px;
+}
+.move-modal {
+  width: min(800px, calc(100% - 30px));
+}
+.move-preview {
+  margin-top: 18px;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.move-row {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.move-row strong,
+.move-row small,
+.move-row code,
+.move-row > span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.move-row small {
+  margin: 4px 0 9px;
+  color: var(--green);
+}
+.move-row code {
+  color: var(--muted);
+  font-size: 12px;
+}
+.move-row.status-error {
+  border-color: #bc8269;
+}
+.move-row.status-error small {
+  color: #b56849;
+}
+.move-row.status-moved {
+  background: var(--green-soft);
+}
+.move-row.status-skip {
+  opacity: 0.75;
+}
+.reading-page {
+  --reading-size: 20px;
+  --reading-width: 680px;
+}
+.reading-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 28px;
+}
+.reading-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: Georgia, "SimSun", serif;
+}
+.reading-bar .secondary {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.reading-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px 22px;
+  padding: 20px 24px;
+  font-size: 13px;
+}
+.reading-tools label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.reading-tools input {
+  width: 90px;
+  accent-color: var(--green);
+}
+.reading-tools select {
+  max-width: 130px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 7px;
+}
+.reading-tools button {
+  font-size: 12px;
+}
+#reading-progress {
+  color: var(--muted);
+}
+.reading-layout {
+  width: min(calc(var(--reading-width) + 96px), calc(100% - 32px));
+  margin: 0 auto 60px;
+}
+.reading-page main.reading-paper {
+  margin: 0;
+  min-height: 65vh;
+  background: var(--paper);
+  padding: 40px 48px 72px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.reading-paper > h1 {
+  font:
+    600 28px/1.5 Georgia,
+    "SimSun",
+    serif;
+  overflow-wrap: anywhere;
+  margin: 0 0 10px;
+}
+.reading-paper .reader {
+  font-size: var(--reading-size);
+  line-height: 2;
+}
+.reading-paper .reader h1 {
+  font-size: 1.5em;
+}
+.reading-paper .reader h2 {
+  font-size: 1.25em;
+}
+.reading-paper .reader h3 {
+  font-size: 1.1em;
+}
+.reading-paper .reader pre {
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reading-nowrap .reading-paper .reader pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.reading-paper .reader pre.plain-reader {
+  font-family: Georgia, "Songti SC", "SimSun", serif;
+  font-size: 1em;
+  line-height: 2;
+  background: none;
+  padding: 0;
+}
+.reading-paper .reader code {
+  font-size: 0.85em;
+}
+.reading-paper .reader pre > code {
+  font-size: inherit;
+}
+.reading-paper .reader table {
+  font-size: 0.8em;
+}
+.reading-paper .reader iframe.standalone-pdf {
+  height: 80vh;
+  min-height: 500px;
+}
+.reading-paper h1,
+.reading-paper h2,
+.reading-paper h3 {
+  scroll-margin-top: 90px;
+}
+#reading-status {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 15px 0;
+}
+#reading-outline {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 16px;
+  background: var(--paper);
+}
+#reading-outline summary {
+  cursor: pointer;
+}
+#reading-toc {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow: auto;
+  gap: 10px;
+  margin-top: 18px;
+  font-size: 14px;
+}
+#reading-toc a {
+  text-decoration: none;
+}
+#reading-toc .toc-h2 {
+  padding-left: 14px;
+}
+#reading-toc .toc-h3 {
+  padding-left: 28px;
+}
+@media (max-width: 650px) {
+  .continue-reading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .shelf-caption {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .recent-move,
+  .place-item {
+    flex-wrap: wrap;
+  }
+  .place-item > div,
+  .recent-move > span {
+    flex-basis: 100%;
+  }
+  .reading-bar {
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .reading-bar .secondary {
+    padding: 7px 9px;
+  }
+  .reading-tools {
+    padding: 14px 12px;
+    gap: 10px;
+  }
+  .reading-page main.reading-paper {
+    padding: 26px 20px 48px;
+  }
+  .reading-layout {
+    width: calc(100% - 20px);
+  }
+}
 .book-meta .meta-separator {
   flex-shrink: 0;
 }

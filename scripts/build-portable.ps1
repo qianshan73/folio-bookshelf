@@ -30,7 +30,7 @@ New-Item -ItemType Directory -Path (Join-Path $staging 'scripts') -Force | Out-N
 Copy-Item -LiteralPath (Join-Path $root 'scripts/file-picker.ps1') -Destination (Join-Path $staging 'scripts/file-picker.ps1')
 New-Item -ItemType Directory -Path (Join-Path $staging 'docs/screenshots') -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $root 'docs') -File -Filter '*.md' | Copy-Item -Destination (Join-Path $staging 'docs')
-foreach ($name in @('bookshelf.png','reader.png','dark.png','mobile.png')) {
+foreach ($name in @('bookshelf.png','reader.png','dark.png','mobile.png','standalone-reader.png','file-organizer.png')) {
     Copy-Item -LiteralPath (Join-Path $root "docs/screenshots/$name") -Destination (Join-Path $staging 'docs/screenshots')
 }
 Push-Location $staging

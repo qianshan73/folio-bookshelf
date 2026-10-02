@@ -1,4 +1,4 @@
-import { marked } from "/vendor/marked.js";
+import { cleanMarkdown } from "/reading.js";
 import DOMPurify from "/vendor/purify.js";
 
 const $ = (s) => document.querySelector(s),
@@ -108,6 +108,11 @@ let state = { books: [], collections: [], stats: {} },
   importTab = "upload",
   selectedFiles = [],
   dragId = null;
+let manageFiles = false,
+  selectedIds = new Set(),
+  moveIds = [],
+  movePlan = null,
+  moving = false;
 let shelfView = localStorage.getItem("folio-view") || "shelf",
   editing = false,
   previewText = "",
@@ -214,6 +219,7 @@ function visibleBooks() {
   else if (view === "review") books = books.filter(due);
   else if (view === "missing")
     books = books.filter((b) => state.stats[b.id] === "missing");
+  else if (view === "local") books = books.filter((b) => b.kind === "path");
   else if (!["all", "trash"].includes(view))
     books = books.filter((b) => b.collection_id === view);
   const type = $("#type-filter").value;
@@ -246,6 +252,12 @@ function visibleBooks() {
 function render() {
   const alive = state.books.filter((b) => !b.trashed);
   $("#total-count").textContent = alive.length;
+  $("#local-count").textContent = alive.filter((b) => b.kind === "path").length;
+  selectedIds = new Set(
+    [...selectedIds].filter((id) =>
+      alive.some((b) => b.id === id && b.kind === "path"),
+    ),
+  );
   $("#favorite-count").textContent = alive.filter((b) => b.favorite).length;
   $("#review-count").textContent = alive.filter(due).length;
   $("#missing-count").textContent = alive.filter(
@@ -263,6 +275,7 @@ function render() {
   const title =
     {
       all: "我的书柜",
+      local: "本地原文件",
       favorite: "特别珍藏",
       recent: "最近翻阅",
       review: "等你回顾",
@@ -275,6 +288,7 @@ function render() {
   $("#view-description").textContent =
     {
       all: "散落的文件、喜欢的文字，在这里好好安放。",
+      local: "不复制，不上传；阅读、定位、归拢原文件都在这里。",
       favorite: "那些值得放在心上的内容。",
       recent: "沿着上次的书签，继续翻阅。",
       review: "和过去收藏的好内容，再次相遇。",
@@ -294,9 +308,10 @@ function render() {
   $("#books").innerHTML = books
     .map(
       (b, i) =>
-        `<article class="book-card" draggable="true" data-id="${esc(b.id)}" style="--delay:${Math.min(i * 0.035, 0.3)}s"><button class="book-open" data-action="open-book" data-id="${esc(b.id)}" aria-label="翻阅 ${esc(b.title)}">${cover(b)}<h2 class="book-title" title="${esc(b.title)}">${esc(b.title)}</h2><div class="book-meta"><span class="file-badge">${esc(b.kind === "url" ? "LINK" : b.extension || "FILE")}</span><span class="meta-separator">·</span><span${state.stats[b.id] === "missing" ? ' class="missing-label"' : ""}>${state.stats[b.id] === "missing" ? "原文件失联" : due(b) ? "到了回顾日期" : esc(collectionName(b.collection_id))}</span></div></button><button class="icon-button book-favorite ${b.favorite ? "selected" : ""}" data-action="favorite" data-id="${esc(b.id)}" aria-label="${b.favorite ? "取消珍藏" : "特别珍藏"} ${esc(b.title)}">${icon("star")}</button></article>`,
+        `<article class="book-card" draggable="true" data-id="${esc(b.id)}" style="--delay:${Math.min(i * 0.035, 0.3)}s">${manageFiles && b.kind === "path" && !b.trashed ? `<label class="book-select"><input type="checkbox" data-select-book="${esc(b.id)}" ${selectedIds.has(b.id) ? "checked" : ""} aria-label="选择原文件 ${esc(b.title)}"><span>选择</span></label>` : ""}<a class="book-read-tab" href="/reader.html?book=${encodeURIComponent(b.id)}" target="_blank" rel="noopener" aria-label="独立阅读 ${esc(b.title)}" title="在新标签页独立阅读">${icon("external")}</a><button class="book-open" data-action="open-book" data-id="${esc(b.id)}" aria-label="翻阅 ${esc(b.title)}">${cover(b)}<h2 class="book-title" title="${esc(b.title)}">${esc(b.title)}</h2><div class="book-meta"><span class="file-badge">${esc(b.kind === "url" ? "LINK" : b.extension || "FILE")}</span><span class="meta-separator">·</span><span${state.stats[b.id] === "missing" ? ' class="missing-label"' : ""}>${state.stats[b.id] === "missing" ? "原文件失联" : due(b) ? "到了回顾日期" : esc(collectionName(b.collection_id))}</span></div></button><button class="icon-button book-favorite ${b.favorite ? "selected" : ""}" data-action="favorite" data-id="${esc(b.id)}" aria-label="${b.favorite ? "取消珍藏" : "特别珍藏"} ${esc(b.title)}">${icon("star")}</button></article>`,
     )
     .join("");
+  renderOrganizer();
   $("#empty").hidden = !!books.length;
   const empty = $("#empty");
   empty.querySelector("h2").textContent = $("#search").value
@@ -375,7 +390,10 @@ function confirmAction(title, message, label = "确定") {
     showDialog(d);
   });
 }
-function showImport(tab = "upload") {
+function showImport(
+  tab = localStorage.getItem("folio-import-tab") ||
+    (state.platform === "win32" ? "path" : "upload"),
+) {
   importTab = tab;
   selectedFiles = [];
   $("#import-feedback").textContent = "原文件会保持不变";
@@ -554,44 +572,7 @@ function renderDetailHeader() {
   const b = activeBook();
   if (!b) return;
   $("#detail-header").innerHTML =
-    `<div class="detail-header">${cover(b)}<div><h2 class="detail-title">${esc(b.title)}</h2><div class="detail-kind">${esc(collectionName(b.collection_id))} · ${kindName[b.kind]} · ${esc(b.extension?.toUpperCase() || "LINK")}</div><div class="detail-header-actions"><button class="secondary" data-action="favorite" data-id="${esc(b.id)}">${icon("star")}${b.favorite ? "已珍藏" : "特别珍藏"}</button>${due(b) ? '<button class="secondary" data-action="reviewed">' + icon("check") + "已回顾</button>" : ""}</div></div></div>`;
-}
-function cleanMarkdown(text) {
-  const html = DOMPurify.sanitize(marked.parse(text, { gfm: true }), {
-    FORBID_TAGS: [
-      "style",
-      "iframe",
-      "form",
-      "input",
-      "button",
-      "video",
-      "audio",
-      "object",
-    ],
-    FORBID_ATTR: ["style"],
-  });
-  const temp = document.createElement("div");
-  temp.innerHTML = html;
-  temp.querySelectorAll("a").forEach((a) => {
-    try {
-      const u = new URL(a.getAttribute("href"), location.href);
-      if (!["http:", "https:"].includes(u.protocol)) {
-        a.removeAttribute("href");
-        return;
-      }
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-    } catch {
-      a.removeAttribute("href");
-    }
-  });
-  temp.querySelectorAll("img").forEach((img) => {
-    const p = document.createElement("span");
-    p.className = "helper";
-    p.textContent = "[图片：" + (img.alt || "外部图片未加载") + "]";
-    img.replaceWith(p);
-  });
-  return temp.innerHTML;
+    `<div class="detail-header">${cover(b)}<div><h2 class="detail-title">${esc(b.title)}</h2><div class="detail-kind">${esc(collectionName(b.collection_id))} · ${kindName[b.kind]} · ${esc(b.extension?.toUpperCase() || "LINK")}</div><div class="detail-header-actions"><a class="secondary" href="/reader.html?book=${encodeURIComponent(b.id)}" target="_blank" rel="noopener">${icon("external")}独立阅读</a>${b.kind === "path" && !b.trashed ? '<button class="secondary" data-action="organize-one">快捷归拢</button>' : ""}<button class="secondary" data-action="favorite" data-id="${esc(b.id)}">${icon("star")}${b.favorite ? "已珍藏" : "特别珍藏"}</button>${due(b) ? '<button class="secondary" data-action="reviewed">' + icon("check") + "已回顾</button>" : ""}</div></div></div>`;
 }
 async function renderDetail() {
   const b = activeBook();
@@ -705,6 +686,264 @@ async function patchCover(values) {
     await renderDetail();
   }
 }
+function renderOrganizer() {
+  $("#file-organizer").hidden = !manageFiles;
+  $("#selected-count").textContent = `已选 ${selectedIds.size} 份`;
+  $("#recent-moves").innerHTML = (state.moveBatches || [])
+    .map(
+      (b) =>
+        `<div class="recent-move"><span>${formatDate(b.created)} · 移动 ${b.total} 份到 <code>${esc(b.name)}</code>${b.remaining ? "" : " · 已全部撤销"}</span>${b.remaining ? `<button class="text-button" data-action="undo-batch" data-batch="${esc(b.id)}">撤销这批移动 (${b.remaining})</button>` : ""}</div>`,
+    )
+    .join("");
+  const recent = state.books
+    .filter(
+      (b) => !b.trashed && b.last_opened && state.stats[b.id] !== "missing",
+    )
+    .sort((a, b) => b.last_opened - a.last_opened)[0];
+  $("#continue-reading").hidden = !recent || view === "trash";
+  $("#continue-reading").innerHTML = recent
+    ? `<span>上次翻阅：<b>${esc(recent.title)}</b></span><a class="text-button" href="/reader.html?book=${encodeURIComponent(recent.id)}" target="_blank" rel="noopener">继续独立阅读 ${icon("external")}</a>`
+    : "";
+}
+function renderPlaces() {
+  $("#places-list").innerHTML =
+    (state.places || [])
+      .map(
+        (p) =>
+          `<div class="place-item"><div><strong>${esc(p.name)}</strong><code>${esc(p.directory)}</code></div><button class="text-button" data-action="rename-place" data-place="${esc(p.id)}">改名</button><button class="text-button" data-action="forget-place" data-place="${esc(p.id)}">忘记去处</button></div>`,
+      )
+      .join("") ||
+    '<p class="helper">还没有常用去处。保存一个文件夹，下次不用再找。</p>';
+}
+function placeOptions(selected = "") {
+  $("#move-place").innerHTML =
+    '<option value="">选择其他文件夹…</option>' +
+    (state.places || [])
+      .map(
+        (p) =>
+          `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`,
+      )
+      .join("");
+}
+function invalidatePlan() {
+  movePlan = null;
+  $("#execute-move").disabled = true;
+  $("#move-preview").replaceChildren();
+  $("#move-status").textContent = "去处更改后请重新预览；文件尚未移动。";
+}
+function showMove(ids) {
+  moveIds = [...new Set(ids)].filter((id) =>
+    state.books.some((b) => b.id === id && b.kind === "path" && !b.trashed),
+  );
+  if (!moveIds.length)
+    throw Error("先勾选本地原文件；副本和链接不参与实际移动");
+  if (moveIds.length > 200) throw Error("一次最多归拢 200 份，请分批选择");
+  $("#move-selection").textContent =
+    `这次归拢 ${moveIds.length} 份原文件。分类、封面、备注不变。`;
+  const remembered = localStorage.getItem("folio-last-place"),
+    p =
+      (state.places || []).find((p) => p.id === remembered) ||
+      state.places?.[0];
+  placeOptions(p?.id);
+  $("#batch-directory").value = p?.directory || "";
+  $("[data-action='browse-batch']").hidden = state.platform !== "win32";
+  invalidatePlan();
+  showDialog($("#move-dialog"));
+}
+function moveRows(entries) {
+  return entries
+    .map(
+      (e) =>
+        `<div class="move-row status-${esc(e.status)}"><strong>${esc(e.title)}</strong><small>${esc(e.message)}</small><code>${esc(e.source)}</code>${e.destination ? `<span>↓</span><code>${esc(e.destination)}</code>` : ""}</div>`,
+    )
+    .join("");
+}
+$("#move-place").onchange = () => {
+  const p = (state.places || []).find((p) => p.id === $("#move-place").value);
+  $("#batch-directory").value = p?.directory || "";
+  invalidatePlan();
+};
+$("#batch-directory").oninput = () => {
+  $("#move-place").value = "";
+  invalidatePlan();
+};
+$("#move-dialog").addEventListener("cancel", (e) => {
+  if (moving) e.preventDefault();
+});
+document.addEventListener("change", (e) => {
+  const id = e.target.dataset.selectBook;
+  if (id) {
+    if (e.target.checked && selectedIds.size >= 200) {
+      e.target.checked = false;
+      toast("这批已选 200 份，先归拢这一批，再继续选择", true);
+      return;
+    }
+    e.target.checked ? selectedIds.add(id) : selectedIds.delete(id);
+    renderOrganizer();
+  }
+});
+$("#place-form").onsubmit = (e) => {
+  e.preventDefault();
+  attempt(async () => {
+    const p = await api("/api/places", "POST", {
+      name: $("#place-name").value,
+      directory: $("#place-directory").value.trim().replace(/^"|"$/g, ""),
+    });
+    localStorage.setItem("folio-last-place", p.id);
+    await refresh();
+    renderPlaces();
+    e.target.reset();
+    toast("常用去处已记住，下次直接选择");
+  });
+};
+async function undoBatch(id) {
+  if (
+    !(await confirmAction(
+      "撤销这批移动？",
+      "这批原文件会回到之前的位置。之后又移动过的文件、或原位置已有同名文件的项目会跳过，并保留结果供你检查。",
+      "撤销这批",
+    ))
+  )
+    return;
+  const r = await api(`/api/move-batches/${id}/undo`, "POST", {});
+  await refresh();
+  if ($("#detail-dialog").open) await renderDetail();
+  toast(
+    `已撤销 ${r.undone} 份移动${r.errors.length ? `，${r.errors.length} 份待处理` : ""}`,
+  );
+  if ($("#move-dialog").open) {
+    invalidatePlan();
+    $("#move-preview").innerHTML = r.errors
+      .map(
+        (e) =>
+          `<div class="move-row status-error"><strong>${esc(e.title)}</strong><small>${esc(e.message)}</small></div>`,
+      )
+      .join("");
+    $("#move-status").textContent =
+      `已撤销 ${r.undone} 份；${r.errors.length} 份待处理。`;
+  }
+  if (r.errors.length)
+    toast(r.errors.map((e) => `${e.title}：${e.message}`).join("；"), true);
+}
+async function organizerAction(action, button) {
+  if (action === "manage-files") {
+    manageFiles = !manageFiles;
+    render();
+  } else if (action === "select-local") {
+    for (const b of visibleBooks())
+      if (b.kind === "path" && !b.trashed && selectedIds.size < 200)
+        selectedIds.add(b.id);
+    if (
+      visibleBooks().filter((b) => b.kind === "path" && !b.trashed).length > 200
+    )
+      toast("先选中 200 份原文件，归拢后可继续下一批");
+    render();
+  } else if (action === "clear-selection") {
+    selectedIds.clear();
+    render();
+  } else if (action === "organize-selected") showMove([...selectedIds]);
+  else if (action === "organize-one") showMove([detailId]);
+  else if (action === "places") {
+    await refresh();
+    renderPlaces();
+    $("[data-action='browse-place']").hidden = state.platform !== "win32";
+    showDialog($("#places-dialog"));
+  } else if (action === "rename-place") {
+    const p = state.places.find((p) => p.id === button.dataset.place);
+    $("#place-name").value = p.name;
+    $("#place-directory").value = p.directory;
+    $("#place-name").focus();
+  } else if (action === "forget-place") {
+    await api("/api/places/" + button.dataset.place, "DELETE");
+    await refresh();
+    renderPlaces();
+  } else if (action === "browse-place" || action === "browse-batch") {
+    await chooseNativePaths(
+      "folder",
+      action === "browse-place" ? "#place-directory" : "#batch-directory",
+      button,
+    );
+    if (action === "browse-batch") {
+      $("#move-place").value = "";
+      invalidatePlan();
+    }
+  } else if (action === "save-current-place") {
+    const p = await api("/api/places", "POST", {
+      directory: $("#batch-directory").value.trim().replace(/^"|"$/g, ""),
+    });
+    localStorage.setItem("folio-last-place", p.id);
+    await refresh();
+    placeOptions(p.id);
+    invalidatePlan();
+    toast("这个去处已记住，名称可在「常用文件夹」中修改");
+  } else if (action === "preview-move") {
+    button.disabled = true;
+    invalidatePlan();
+    try {
+      const plan = await api("/api/move-plan", "POST", {
+        ids: moveIds,
+        directory: $("#batch-directory").value.trim().replace(/^"|"$/g, ""),
+        place_id: $("#move-place").value,
+      });
+      movePlan = plan;
+      $("#move-preview").innerHTML = moveRows(plan.entries);
+      const n = plan.entries.filter((e) => e.status === "ready").length;
+      $("#execute-move").disabled = !n;
+      $("#move-status").textContent =
+        `待移动 ${n} 份 · 跳过 / 待处理 ${plan.entries.length - n} 份。请核对去处。`;
+    } finally {
+      button.disabled = false;
+    }
+  } else if (action === "execute-move") {
+    if (!movePlan || moving) return true;
+    moving = true;
+    const id = movePlan.id;
+    $("#move-status").textContent = "正在移动原文件，请稍候…";
+    $$("#move-dialog button,#move-dialog input,#move-dialog select").forEach(
+      (b) => (b.disabled = true),
+    );
+    try {
+      const r = await api("/api/move-execute", "POST", {
+        plan_id: id,
+        confirm: true,
+      });
+      if ($("#move-place").value)
+        localStorage.setItem("folio-last-place", $("#move-place").value);
+      movePlan = null;
+      for (const e of r.entries)
+        if (e.status === "moved") selectedIds.delete(e.id);
+      await refresh();
+      if ($("#detail-dialog").open) await renderDetail();
+      $("#move-preview").innerHTML =
+        moveRows(r.entries) +
+        (r.batch_id
+          ? `<button class="secondary" data-action="undo-batch" data-batch="${esc(r.batch_id)}">撤销这批移动</button>`
+          : "");
+      $("#move-status").textContent =
+        `完成：已移动 ${r.moved} 份；${r.entries.filter((e) => e.status === "error").length} 份待处理。`;
+      toast(`已归拢 ${r.moved} 份原文件，书柜引用已同步`);
+    } catch (e) {
+      movePlan = null;
+      $("#move-status").textContent =
+        e.message + "；可重新预览，或在整理栏检查最近移动。";
+      throw e;
+    } finally {
+      moving = false;
+      $$("#move-dialog button,#move-dialog input,#move-dialog select").forEach(
+        (b) => (b.disabled = false),
+      );
+      $("#execute-move").disabled = true;
+    }
+  } else if (action === "undo-batch") {
+    button.disabled = true;
+    try {
+      await undoBatch(button.dataset.batch);
+    } finally {
+      button.disabled = false;
+    }
+  } else return false;
+  return true;
+}
 async function focusNativePicker() {
   if (!nativePickerActive || Date.now() - pickerFocusAt < 200) return;
   pickerFocusAt = Date.now();
@@ -775,6 +1014,11 @@ document.addEventListener(
 );
 window.addEventListener("focus", () => {
   if (nativePickerActive) void focusNativePicker();
+  else if (!document.querySelector("dialog[open]")) void attempt(refresh);
+});
+window.addEventListener("storage", (e) => {
+  if (e.key === "folio-theme")
+    document.body.classList.toggle("dark", e.newValue === "dark");
 });
 $("#name-form").onsubmit = (e) => {
   e.preventDefault();
@@ -799,6 +1043,7 @@ document.addEventListener("click", (e) => {
   }
   if (button.dataset.importTab) {
     importTab = button.dataset.importTab;
+    localStorage.setItem("folio-import-tab", importTab);
     selectedFiles = [];
     renderImport();
     return;
@@ -826,7 +1071,7 @@ document.addEventListener("click", (e) => {
   }
   const action = button.dataset.action;
   attempt(async () => {
-    if (action === "import") showImport();
+    if (action === "import") showImport(button.dataset.import || undefined);
     else if (action === "close-modal") {
       if (
         button.closest("#detail-dialog") &&
@@ -834,10 +1079,12 @@ document.addEventListener("click", (e) => {
         !(await confirmAction("离开编辑？", "尚未保存的内容会被丢弃。", "离开"))
       )
         return;
+      if (moving && button.closest("#move-dialog")) return;
       button.closest("dialog").close();
       editing = false;
     } else if (action === "new-collection") showDialog($("#name-dialog"));
     else if (action === "settings") showDialog($("#settings-dialog"));
+    else if (await organizerAction(action, button)) return;
     else if (action === "theme") {
       document.body.classList.toggle("dark");
       localStorage.setItem(
@@ -1063,7 +1310,11 @@ $$("dialog").forEach((d) =>
       e.clientY < r.top ||
       e.clientY > r.bottom
     ) {
-      if (d.id === "confirm-dialog" || (d.id === "detail-dialog" && editing))
+      if (
+        d.id === "confirm-dialog" ||
+        (d.id === "detail-dialog" && editing) ||
+        (d.id === "move-dialog" && moving)
+      )
         return;
       d.close();
     }
@@ -1125,7 +1376,7 @@ document.addEventListener("drop", (e) => {
         selectedFiles = files;
         renderSelectedFiles();
       } else {
-        showImport();
+        showImport("upload");
         selectedFiles = files;
         renderSelectedFiles();
       }
@@ -1189,4 +1440,15 @@ if ("modelContext" in navigator) {
     /* Experimental WebMCP is optional. */
   }
 }
-attempt(refresh);
+attempt(async () => {
+  await refresh();
+  const q = new URLSearchParams(location.search);
+  if (q.get("book") && state.books.some((b) => b.id === q.get("book"))) {
+    await openBook(q.get("book"));
+    if (q.get("tab") === "location") {
+      detailTab = "location";
+      await renderDetail();
+    }
+    history.replaceState(null, "", "/");
+  }
+});

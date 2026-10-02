@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>拾页 Folio · 独立阅读</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="reading-page">
+    <header class="reading-bar">
+      <a href="/" class="secondary">← 返回书柜</a>
+      <span id="reading-name">正在翻开…</span>
+      <button id="reader-theme" class="secondary">切换明暗</button>
+    </header>
+    <div class="reading-tools" aria-label="阅读设置">
+      <label
+        >字号
+        <input
+          id="reading-size"
+          type="range"
+          min="16"
+          max="30"
+          value="20"
+        /><output id="size-label">20</output></label
+      >
+      <label
+        >页宽
+        <select id="reading-width">
+          <option value="680">舒适窄页</option>
+          <option value="860">标准</option>
+          <option value="1120">宽页 / 代码</option>
+        </select></label
+      >
+      <button id="reading-wrap" class="secondary" aria-pressed="true">
+        自动换行
+      </button>
+      <button id="reading-top" class="text-button">回到开头</button>
+      <a id="reading-download" class="text-button" hidden>下载原文件</a>
+      <span id="reading-progress" aria-live="off">阅读位置会自动记住</span>
+    </div>
+    <div class="reading-layout">
+      <details id="reading-outline" hidden>
+        <summary>章节目录</summary>
+        <nav aria-label="章节目录" id="reading-toc"></nav>
+      </details>
+      <main class="reading-paper">
+        <h1 id="reading-title">正在翻开这份内容…</h1>
+        <p id="reading-kind" class="helper"></p>
+        <div id="reading-status" role="status"></div>
+        <article id="reading-content" class="reader"></article>
+      </main>
+    </div>
+    <script type="module" src="/reader.js"></script>
+  </body>
+</html>

@@ -8,6 +8,7 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import hljs from "highlight.js";
 import { NativePicker } from "./lib/native-dialog.mjs";
+import { FileManager } from "./lib/file-manager.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(
@@ -316,6 +317,7 @@ async function refreshExcerpt(b) {
     }
   }
 }
+const fileManager = new FileManager(db, getBook, cleanName);
 const server = http.createServer(async (req, res) => {
   try {
     const host = req.headers.host || "";
@@ -338,7 +340,7 @@ const server = http.createServer(async (req, res) => {
       )
         throw fail("请刷新页面后重试", 403);
       if (route === "/api/health" && req.method === "GET")
-        return json(res, { app: "folio-bookshelf", version: "1.0.1" });
+        return json(res, { app: "folio-bookshelf", version: "1.1.0" });
       if (route === "/api/reindex" && req.method === "POST") {
         const books = db
           .prepare("SELECT * FROM books WHERE trashed=0 AND kind='path'")
@@ -382,8 +384,24 @@ const server = http.createServer(async (req, res) => {
           token: TOKEN,
           platform: process.platform,
           dataPath: DATA,
+          places: fileManager.places(),
+          moveBatches: fileManager.batches(),
         });
       }
+      if (route === "/api/places" && req.method === "POST")
+        return json(res, await fileManager.savePlace(await jsonBody(req)));
+      const placeMatch = route.match(/^\/api\/places\/([^/]+)$/);
+      if (placeMatch && req.method === "DELETE") {
+        db.prepare("DELETE FROM places WHERE id=?").run(placeMatch[1]);
+        return json(res, { ok: true });
+      }
+      if (route === "/api/move-plan" && req.method === "POST")
+        return json(res, await fileManager.plan(await jsonBody(req)));
+      if (route === "/api/move-execute" && req.method === "POST")
+        return json(res, await fileManager.execute(await jsonBody(req)));
+      const batchMatch = route.match(/^\/api\/move-batches\/([^/]+)\/undo$/);
+      if (batchMatch && req.method === "POST")
+        return json(res, await fileManager.undoBatch(batchMatch[1]));
       if (route === "/api/search" && req.method === "GET") {
         const q = String(u.searchParams.get("q") || "").slice(0, 300);
         const like = "%" + q.replace(/[!%_]/g, "!$&") + "%";
@@ -608,6 +626,7 @@ const server = http.createServer(async (req, res) => {
           collections: db.prepare("SELECT * FROM collections").all(),
           books,
           files,
+          places: fileManager.places(),
         };
         res.setHeader(
           "Content-Disposition",
@@ -627,6 +646,19 @@ const server = http.createServer(async (req, res) => {
           b.books.length > 10000
         )
           throw fail("请选择有效的 .folio 备份文件");
+        if (
+          b.places !== undefined &&
+          (!Array.isArray(b.places) ||
+            b.places.length > 50 ||
+            b.places.some(
+              (p) =>
+                !p ||
+                typeof p.name !== "string" ||
+                typeof p.directory !== "string" ||
+                !path.isAbsolute(p.directory),
+            ))
+        )
+          throw fail("备份常用文件夹格式无效");
         // Merge restore never overwrites existing records or original paths.
         const mapping = new Map(),
           created = [],
@@ -683,6 +715,14 @@ const server = http.createServer(async (req, res) => {
           await fsp.writeFile(p, buf, { flag: "wx" });
         db.exec("BEGIN");
         try {
+          for (const p of b.places || []) {
+            if (fileManager.places().length >= 50) break;
+            db.prepare("INSERT OR IGNORE INTO places VALUES(?,?,?)").run(
+              randomUUID(),
+              title(p.name).slice(0, 80),
+              p.directory,
+            );
+          }
           for (const c of b.collections)
             db.prepare("INSERT OR IGNORE INTO collections VALUES(?,?)").run(
               String(c.id),
@@ -730,6 +770,13 @@ const server = http.createServer(async (req, res) => {
       if (match) {
         const b = getBook(match[1]),
           action = match[2];
+        if (!action && req.method === "GET") {
+          const { excerpt, hash, ...book } = b;
+          return json(res, {
+            book: { ...book, tags: JSON.parse(b.tags) },
+            token: TOKEN,
+          });
+        }
         if (!action && req.method === "PATCH") {
           const v = await jsonBody(req),
             allowed = [
@@ -832,106 +879,25 @@ const server = http.createServer(async (req, res) => {
         if (action === "relink" && req.method === "POST") {
           if (b.kind !== "path") throw fail("仅路径引用支持重新定位");
           const v = await jsonBody(req);
-          if (!path.isAbsolute(v.path)) throw fail("请填写绝对路径");
-          const st = await fsp.stat(v.path);
-          if (!st.isFile()) throw fail("请选择文件");
-          const p = path.resolve(v.path);
-          db.prepare(
-            "UPDATE books SET source=?,file_name=?,extension=?,updated=? WHERE id=?",
-          ).run(p, path.basename(p), ext(p), Date.now(), b.id);
-          await refreshExcerpt(getBook(b.id));
-          return json(res, { ok: true });
-        }
-        if (action === "move" && req.method === "POST") {
-          const v = await jsonBody(req);
-          if (b.kind !== "path")
-            throw fail("仅路径引用可移动原文件，副本可通过下载另存");
-          if (v.confirm !== true) throw fail("请先确认移动原文件");
-          if (!path.isAbsolute(v.directory))
-            throw fail("目标文件夹必须是绝对路径");
-          const targetDir = await fsp.realpath(v.directory),
-            st = await fsp.stat(targetDir);
-          if (!st.isDirectory()) throw fail("目标应为文件夹");
-          const source = await fsp.realpath(b.source),
-            dest = path.join(
-              targetDir,
-              cleanName(v.filename || path.basename(source)),
-            );
-          if (source === dest) throw fail("文件已经在这个位置");
-          await fsp.copyFile(source, dest, fs.constants.COPYFILE_EXCL);
-          try {
-            await fsp.unlink(source);
-          } catch (e) {
-            await fsp.unlink(dest).catch(() => {});
-            throw e;
-          }
-          const moveId = randomUUID();
-          try {
-            db.exec("BEGIN");
+          await fileManager.lock(async () => {
+            if (!path.isAbsolute(v.path)) throw fail("请填写绝对路径");
+            const st = await fsp.stat(v.path);
+            if (!st.isFile()) throw fail("请选择文件");
+            const p = path.resolve(v.path);
             db.prepare(
               "UPDATE books SET source=?,file_name=?,extension=?,updated=? WHERE id=?",
-            ).run(dest, path.basename(dest), ext(dest), Date.now(), b.id);
-            db.prepare("INSERT INTO moves VALUES(?,?,?,?,?,0)").run(
-              moveId,
-              b.id,
-              source,
-              dest,
-              Date.now(),
-            );
-            db.exec("COMMIT");
-          } catch (e) {
-            db.exec("ROLLBACK");
-            await fsp.copyFile(dest, source, fs.constants.COPYFILE_EXCL);
-            await fsp.unlink(dest);
-            throw e;
-          }
-          return json(res, { ok: true, moveId, path: dest });
+            ).run(p, path.basename(p), ext(p), Date.now(), b.id);
+            await refreshExcerpt(getBook(b.id));
+          });
+          return json(res, { ok: true });
         }
-        if (action === "undo-move" && req.method === "POST") {
-          const m = db
-            .prepare(
-              "SELECT * FROM moves WHERE book_id=? AND undone=0 ORDER BY created DESC LIMIT 1",
-            )
-            .get(b.id);
-          if (!m) throw fail("没有可撤销的移动");
-          if (b.source !== m.after_path)
-            throw fail("文件位置已改变，请重新定位");
-          await fsp.copyFile(
-            m.after_path,
-            m.before_path,
-            fs.constants.COPYFILE_EXCL,
+        if (action === "move" && req.method === "POST")
+          return json(
+            res,
+            await fileManager.singleMove(b.id, await jsonBody(req)),
           );
-          try {
-            await fsp.unlink(m.after_path);
-          } catch (e) {
-            await fsp.unlink(m.before_path).catch(() => {});
-            throw e;
-          }
-          db.exec("BEGIN");
-          try {
-            db.prepare(
-              "UPDATE books SET source=?,file_name=?,extension=?,updated=? WHERE id=?",
-            ).run(
-              m.before_path,
-              path.basename(m.before_path),
-              ext(m.before_path),
-              Date.now(),
-              b.id,
-            );
-            db.prepare("UPDATE moves SET undone=1 WHERE id=?").run(m.id);
-            db.exec("COMMIT");
-          } catch (e) {
-            db.exec("ROLLBACK");
-            await fsp.copyFile(
-              m.before_path,
-              m.after_path,
-              fs.constants.COPYFILE_EXCL,
-            );
-            await fsp.unlink(m.before_path);
-            throw e;
-          }
-          return json(res, { ok: true });
-        }
+        if (action === "undo-move" && req.method === "POST")
+          return json(res, await fileManager.undo(b.id));
         if (action === "reveal" && req.method === "POST") {
           const p = filePath(b);
           if (!p) throw fail("链接没有本地文件");

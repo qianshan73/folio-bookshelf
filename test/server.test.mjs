@@ -76,6 +76,9 @@ test("health, static app and loopback origin/token enforcement", async () => {
   assert.equal((await fetch(base + "/")).status, 200);
   assert.equal((await fetch(base + "/vendor/marked.js")).status, 200);
   assert.equal((await fetch(base + "/vendor/purify.js")).status, 200);
+  const ico = await fetch(base + "/icons/folio.ico");
+  assert.equal(ico.status, 200);
+  assert.equal(ico.headers.get("content-type"), "image/x-icon");
   assert.equal(
     (
       await call(

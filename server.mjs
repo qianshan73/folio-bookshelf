@@ -340,7 +340,7 @@ const server = http.createServer(async (req, res) => {
       )
         throw fail("请刷新页面后重试", 403);
       if (route === "/api/health" && req.method === "GET")
-        return json(res, { app: "folio-bookshelf", version: "1.1.0" });
+        return json(res, { app: "folio-bookshelf", version: "1.1.1" });
       if (route === "/api/reindex" && req.method === "POST") {
         const books = db
           .prepare("SELECT * FROM books WHERE trashed=0 AND kind='path'")
@@ -1043,6 +1043,7 @@ const server = http.createServer(async (req, res) => {
         throw fail("资源不存在", 404);
     }
     const types = {
+      ".ico": "image/x-icon",
       ".html": "text/html; charset=utf-8",
       ".mjs": "text/javascript; charset=utf-8",
       ".js": "text/javascript; charset=utf-8",

@@ -5,6 +5,7 @@ release/
 test-results/
 playwright-report/
 *.folio
+*.lnk
 *.log
 *.sqlite*
 .env

@@ -276,7 +276,10 @@ try {
   await page.locator('[data-action="select-local"]').click();
   assert.match(await page.locator("#selected-count").textContent(), /2/);
   await page.locator('[data-action="organize-selected"]').click();
-  assert.equal(await page.locator("#batch-directory").inputValue(), bulkTarget);
+  assert.equal(
+    await page.locator("#batch-directory").inputValue(),
+    await fs.realpath(bulkTarget),
+  );
   assert.equal(await page.locator("#execute-move").isDisabled(), true);
   await page.locator('[data-action="preview-move"]').click();
   await page.waitForSelector(".move-row.status-ready");

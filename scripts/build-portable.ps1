@@ -23,9 +23,11 @@ New-Item -ItemType Directory -Path (Join-Path $staging 'runtime') | Out-Null
 $nodeDir = Join-Path $extracted "node-$NodeVersion-win-x64"
 Copy-Item -LiteralPath (Join-Path $nodeDir 'node.exe') -Destination (Join-Path $staging 'runtime/node.exe')
 Copy-Item -LiteralPath (Join-Path $nodeDir 'LICENSE') -Destination (Join-Path $staging 'runtime/NODE_LICENSE.txt')
-foreach ($name in @('public','server.mjs','start.cmd','launch.ps1','start.sh','package.json','package-lock.json','README.md','LICENSE','AI_USAGE.md')) {
+foreach ($name in @('public','lib','server.mjs','start.cmd','launch.ps1','start.sh','package.json','package-lock.json','README.md','LICENSE','AI_USAGE.md')) {
     Copy-Item -LiteralPath (Join-Path $root $name) -Destination $staging -Recurse
 }
+New-Item -ItemType Directory -Path (Join-Path $staging 'scripts') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'scripts/file-picker.ps1') -Destination (Join-Path $staging 'scripts/file-picker.ps1')
 New-Item -ItemType Directory -Path (Join-Path $staging 'docs/screenshots') -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $root 'docs') -File -Filter '*.md' | Copy-Item -Destination (Join-Path $staging 'docs')
 foreach ($name in @('bookshelf.png','reader.png','dark.png','mobile.png')) {

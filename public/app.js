@@ -74,6 +74,31 @@ const CODE = new Set([
   "svelte",
 ]);
 const TEXT = new Set(["md", "markdown", "txt", "csv", "log", ...CODE]);
+const NOTE_FORMATS = [
+  ["md", "Markdown"],
+  ["txt", "纯文本"],
+  ["js", "JavaScript"],
+  ["cpp", "C++"],
+  ["ts", "TypeScript"],
+  ["py", "Python"],
+  ["c", "C"],
+  ["h", "C / C++ 头文件"],
+  ["java", "Java"],
+  ["rs", "Rust"],
+  ["go", "Go"],
+  ["json", "JSON"],
+  ["html", "HTML"],
+  ["css", "CSS"],
+  ["xml", "XML"],
+  ["yaml", "YAML"],
+  ["sql", "SQL"],
+  ["csv", "CSV"],
+  ["log", "日志"],
+  ["tex", "LaTeX"],
+  ["custom", "自定义文本扩展名"],
+];
+let nativePickerActive = false,
+  pickerFocusAt = 0;
 let state = { books: [], collections: [], stats: {} },
   view = "all",
   searchIds = null,
@@ -371,7 +396,9 @@ function renderImport() {
       '<div class="form-field"><label for="link-url">网络地址</label><input id="link-url" type="url" placeholder="https://…" required></div><div class="form-field"><label for="link-title">给它一个容易记住的名字</label><input id="link-title" placeholder="例如：我想再读一次的文章"></div><div class="form-field"><label for="link-note">为什么值得留存</label><textarea id="link-note" placeholder="写下一句自己的推荐语…"></textarea></div><p class="helper">这里只记录链接和笔记，不抓取网页快照。页面离线或删除后，原网页可能不再可访问。</p>';
   else
     area.innerHTML =
-      '<div class="form-field"><label for="note-title">笔记名称</label><input id="note-title" placeholder="给未来的自己" required maxlength="180"></div><div class="form-field"><label for="note-content">粘贴或写下内容</label><textarea id="note-content" rows="8" placeholder="# 一个值得留下的想法\n\n支持 Markdown…" required></textarea></div>';
+      '<div class="form-field"><label for="note-title">文件名称</label><input id="note-title" placeholder="给未来的自己" required maxlength="180"></div>' +
+      `<div class="form-field"><label for="note-format">保存为文件类型</label><select id="note-format">${NOTE_FORMATS.map(([extension, label]) => `<option value="${extension}">${esc(label)}${extension === "custom" ? "" : ` (.${extension})`}</option>`).join("")}</select><div id="note-custom-field" hidden><label for="note-custom-extension">自定义扩展名</label><input id="note-custom-extension" placeholder="例如 rst、lua、ini" maxlength="13" pattern="\\.?[a-zA-Z0-9]{1,12}"></div><small id="note-format-hint">将保存为 .md 文件，支持 Markdown 阅读和编辑。</small></div>` +
+      '<div class="form-field"><label for="note-content">粘贴或写下内容</label><textarea id="note-content" rows="8" placeholder="# 一个值得留下的想法\n\n支持 Markdown…" required></textarea></div>';
   const defaultCol = state.collections.some((c) => c.id === view)
     ? view
     : importTab === "link"
@@ -386,6 +413,21 @@ function renderImport() {
       selectedFiles = [...input.files];
       renderSelectedFiles();
     };
+  if ($("#note-format")) {
+    $("#note-format").onchange = () => {
+      const extension = $("#note-format").value;
+      $("#note-custom-field").hidden = extension !== "custom";
+      $("#note-custom-extension").required = extension === "custom";
+      $("#note-format-hint").textContent =
+        extension === "custom"
+          ? "填写文本或代码文件的扩展名，内容以 UTF-8 纯文本保存。"
+          : `将保存为 .${extension} 文件，${extension === "md" ? "支持 Markdown 阅读和编辑。" : "保留你粘贴的原始文字，不执行代码。"}`;
+      $("#note-content").placeholder =
+        extension === "md"
+          ? "# 一个值得留下的想法\n\n支持 Markdown…"
+          : "粘贴文字或代码，按所选文件类型保存…";
+    };
+  }
 }
 function renderSelectedFiles() {
   const el = $("#file-selection");
@@ -472,6 +514,10 @@ $("#import-form").addEventListener("submit", async (e) => {
       await api("/api/note", "POST", {
         title: $("#note-title").value,
         content: $("#note-content").value,
+        extension:
+          $("#note-format").value === "custom"
+            ? $("#note-custom-extension").value
+            : $("#note-format").value,
         collection_id: col,
       });
       result = { added: 1 };
@@ -567,7 +613,7 @@ async function renderDetail() {
       area.innerHTML = `<div class="reader"><iframe title="${esc(b.title)} PDF 预览" src="/api/books/${b.id}/content"></iframe><p class="helper">PDF 预览使用浏览器内置阅读器。<a href="/api/books/${b.id}/content?download=1">下载文件</a></p></div>`;
       return;
     }
-    if (!TEXT.has(b.extension)) {
+    if (!TEXT.has(b.extension) && b.kind !== "note") {
       area.innerHTML = `<div class="preview-error">${icon("file")}<p>这份文件已妥善入柜。此格式请下载后用对应应用打开。</p><a class="secondary" href="/api/books/${b.id}/content?download=1">下载原文件</a><button class="secondary" data-action="reveal">在文件夹中查看</button></div>`;
       return;
     }
@@ -659,6 +705,77 @@ async function patchCover(values) {
     await renderDetail();
   }
 }
+async function focusNativePicker() {
+  if (!nativePickerActive || Date.now() - pickerFocusAt < 200) return;
+  pickerFocusAt = Date.now();
+  try {
+    const result = await api("/api/dialog/focus", "POST", {});
+    // The initial /dialog request may still be arriving. Its own finally block
+    // is the only owner of the pending state; a focus response must not clear it.
+  } catch {
+    // A network failure is handled by the outstanding picker request.
+  }
+}
+async function chooseNativePaths(kind, target, button) {
+  if (nativePickerActive) {
+    await focusNativePicker();
+    return;
+  }
+  nativePickerActive = true;
+  const oldLabel = button.innerHTML;
+  button.innerHTML = `${icon("folder")}返回选择窗口`;
+  button.setAttribute("aria-busy", "true");
+  const hint = document.createElement("div");
+  hint.className = "native-picker-hint";
+  hint.innerHTML =
+    '<span>请在置顶的系统窗口完成选择。点击页面会重新置顶。</span><button type="button" class="text-button" data-action="cancel-picker">取消选择</button>';
+  button.closest(".form-field")?.append(hint);
+  try {
+    const result = await api("/api/dialog", "POST", { kind });
+    const input = $(target);
+    if (input && result.paths.length && result.kind === kind)
+      input.value =
+        kind === "files" && target === "#import-paths"
+          ? result.paths.join("\n")
+          : result.paths[0];
+  } finally {
+    nativePickerActive = false;
+    button.innerHTML = oldLabel;
+    button.removeAttribute("aria-busy");
+    hint.remove();
+  }
+}
+// Keep page actions underneath the pending system picker from changing its target.
+for (const event of ["pointerdown", "click"])
+  document.addEventListener(
+    event,
+    (e) => {
+      if (
+        !nativePickerActive ||
+        e.target.closest('[data-action="cancel-picker"]')
+      )
+        return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      void focusNativePicker();
+    },
+    true,
+  );
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (!nativePickerActive) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape")
+      void attempt(() => api("/api/dialog/cancel", "POST", {}));
+    else void focusNativePicker();
+  },
+  true,
+);
+window.addEventListener("focus", () => {
+  if (nativePickerActive) void focusNativePicker();
+});
 $("#name-form").onsubmit = (e) => {
   e.preventDefault();
   attempt(async () => {
@@ -748,15 +865,13 @@ document.addEventListener("click", (e) => {
       await refresh();
       if (detailId === id && $("#detail-dialog").open) renderDetailHeader();
     } else if (action === "browse-import") {
-      button.disabled = true;
-      try {
-        const r = await api("/api/dialog", "POST", {
-          kind: importTab === "folder" ? "folder" : "files",
-        });
-        if (r.paths.length) $("#import-paths").value = r.paths.join("\n");
-      } finally {
-        button.disabled = false;
-      }
+      await chooseNativePaths(
+        importTab === "folder" ? "folder" : "files",
+        "#import-paths",
+        button,
+      );
+    } else if (action === "cancel-picker") {
+      await api("/api/dialog/cancel", "POST", {});
     } else if (action === "reviewed") {
       await api(`/api/books/${detailId}`, "PATCH", { review_date: "" });
       await refresh();
@@ -792,18 +907,11 @@ document.addEventListener("click", (e) => {
       await api(`/api/books/${detailId}/refresh`, "POST", {});
       toast("内容索引已更新");
     } else if (action === "browse-relink" || action === "browse-move") {
-      button.disabled = true;
-      try {
-        const r = await api("/api/dialog", "POST", {
-          kind: action === "browse-move" ? "folder" : "files",
-        });
-        if (r.paths[0])
-          $(
-            action === "browse-move" ? "#move-directory" : "#relink-path",
-          ).value = r.paths[0];
-      } finally {
-        button.disabled = false;
-      }
+      await chooseNativePaths(
+        action === "browse-move" ? "folder" : "files",
+        action === "browse-move" ? "#move-directory" : "#relink-path",
+        button,
+      );
     } else if (action === "relink") {
       await api(`/api/books/${detailId}/relink`, "POST", {
         path: $("#relink-path").value.trim().replace(/^"|"$/g, ""),

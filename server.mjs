@@ -5,9 +5,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
-import { spawn, execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import hljs from "highlight.js";
+import { NativePicker } from "./lib/native-dialog.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(
@@ -181,7 +181,10 @@ async function saveCopy(buffer, name, options = {}) {
       extension,
       stored,
       hash,
-      excerpt: excerpt(buffer, extension),
+      excerpt:
+        options.kind === "note"
+          ? decode(buffer.subarray(0, 512 * 1024))
+          : excerpt(buffer, extension),
     });
   } catch (e) {
     await fsp.unlink(path.join(DATA, "files", stored));
@@ -294,38 +297,17 @@ async function browseDirectory(
   }
   return entries;
 }
-let dialogBusy = false;
-async function nativeDialog(kind) {
-  if (dialogBusy) throw fail("另一个选择窗口正在打开");
-  if (process.platform !== "win32") throw fail("此系统请手动填写绝对路径");
-  dialogBusy = true;
-  const script = `Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ${kind === "folder" ? "$d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description='选择文件夹'; if($d.ShowDialog() -eq 'OK'){ ConvertTo-Json -Compress -InputObject @($d.SelectedPath) }" : "$d=New-Object System.Windows.Forms.OpenFileDialog; $d.Multiselect=$true; $d.Title='选择本地文件'; if($d.ShowDialog() -eq 'OK'){ ConvertTo-Json -Compress -InputObject @($d.FileNames) }"}`;
-  try {
-    const { stdout } = await promisify(execFile)(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-STA",
-        "-EncodedCommand",
-        Buffer.from(script, "utf16le").toString("base64"),
-      ],
-      { windowsHide: true, timeout: 180000 },
-    );
-    return stdout.trim() ? JSON.parse(stdout) : [];
-  } finally {
-    dialogBusy = false;
-  }
-}
+const nativePicker = new NativePicker();
 async function refreshExcerpt(b) {
   const p = filePath(b);
-  if (p && TEXT_EXT.has(b.extension)) {
+  if (p && (TEXT_EXT.has(b.extension) || b.kind === "note")) {
     const st = await fsp.stat(p);
     const f = await fsp.open(p, "r");
     try {
       const buf = Buffer.alloc(Math.min(st.size, 512 * 1024));
       await f.read(buf, 0, buf.length, 0);
       db.prepare("UPDATE books SET excerpt=?,updated=? WHERE id=?").run(
-        excerpt(buf, b.extension),
+        b.kind === "note" ? decode(buf) : excerpt(buf, b.extension),
         Date.now(),
         b.id,
       );
@@ -356,7 +338,7 @@ const server = http.createServer(async (req, res) => {
       )
         throw fail("请刷新页面后重试", 403);
       if (route === "/api/health" && req.method === "GET")
-        return json(res, { app: "folio-bookshelf", version: "1.0.0" });
+        return json(res, { app: "folio-bookshelf", version: "1.0.1" });
       if (route === "/api/reindex" && req.method === "POST") {
         const books = db
           .prepare("SELECT * FROM books WHERE trashed=0 AND kind='path'")
@@ -416,12 +398,17 @@ const server = http.createServer(async (req, res) => {
       }
       if (route === "/api/dialog" && req.method === "POST") {
         const body = await jsonBody(req);
-        return json(res, {
-          paths: await nativeDialog(
-            body.kind === "folder" ? "folder" : "files",
-          ),
-        });
+        return json(res, await nativePicker.choose(body.kind));
       }
+      if (route === "/api/dialog/state" && req.method === "GET")
+        return json(res, {
+          active: nativePicker.state.active,
+          kind: nativePicker.state.kind,
+        });
+      if (route === "/api/dialog/focus" && req.method === "POST")
+        return json(res, { active: nativePicker.focus() });
+      if (route === "/api/dialog/cancel" && req.method === "POST")
+        return json(res, { active: nativePicker.cancel() });
       if (route === "/api/import" && req.method === "POST") {
         const body = await jsonBody(req);
         if (!Array.isArray(body.files) || body.files.length > 100)
@@ -514,13 +501,49 @@ const server = http.createServer(async (req, res) => {
       }
       if (route === "/api/note" && req.method === "POST") {
         const b = await jsonBody(req);
+        const extension = String(b.extension ?? "md")
+          .trim()
+          .toLowerCase()
+          .replace(/^\./, "");
+        if (!/^[a-z0-9]{1,12}$/.test(extension))
+          throw fail("文件扩展名请使用 1–12 个英文字母或数字");
+        if (
+          [
+            "pdf",
+            "png",
+            "jpg",
+            "jpeg",
+            "webp",
+            "gif",
+            "epub",
+            "doc",
+            "docx",
+            "xls",
+            "xlsx",
+            "ppt",
+            "pptx",
+            "zip",
+            "rar",
+            "7z",
+            "exe",
+            "dll",
+            "bin",
+            "sqlite",
+          ].includes(extension)
+        )
+          throw fail("此格式不是纯文本格式，请选择文字或代码文件类型");
+        const noteTitle = title(b.title || "新笔记");
+        const baseName = cleanName(noteTitle).replace(
+          new RegExp("\\." + extension + "$", "i"),
+          "",
+        );
         return json(
           res,
           await saveCopy(
             Buffer.from(String(b.content || "")),
-            cleanName(b.title || "新笔记") + ".md",
+            baseName + "." + extension,
             {
-              title: b.title || "新笔记",
+              title: noteTitle,
               kind: "note",
               collection_id: b.collection_id || "notes",
               allowDuplicate: true,
@@ -927,7 +950,10 @@ const server = http.createServer(async (req, res) => {
         }
         if (action === "content" && req.method === "PUT") {
           const v = await jsonBody(req);
-          if (!["copy", "note"].includes(b.kind) || !TEXT_EXT.has(b.extension))
+          if (
+            !["copy", "note"].includes(b.kind) ||
+            (!TEXT_EXT.has(b.extension) && b.kind !== "note")
+          )
             throw fail("只支持编辑书柜中的文本副本");
           const content = Buffer.from(String(v.content || ""));
           if (content.length > MAX_FILE) throw fail("文本内容过大");
@@ -938,7 +964,9 @@ const server = http.createServer(async (req, res) => {
           db.prepare(
             "UPDATE books SET excerpt=?,hash=?,updated=? WHERE id=?",
           ).run(
-            excerpt(content, b.extension),
+            b.kind === "note"
+              ? decode(content.subarray(0, 512 * 1024))
+              : excerpt(content, b.extension),
             createHash("sha256").update(content).digest("hex"),
             Date.now(),
             b.id,
@@ -956,7 +984,7 @@ const server = http.createServer(async (req, res) => {
           }
           if (!st.isFile()) throw fail("路径不再指向文件");
           if (u.searchParams.get("text") === "1") {
-            if (!TEXT_EXT.has(b.extension))
+            if (!TEXT_EXT.has(b.extension) && b.kind !== "note")
               throw fail("此格式请下载或用系统应用打开");
             const f = await fsp.open(p, "r");
             try {
@@ -1102,9 +1130,10 @@ server.listen(PORT, "127.0.0.1", () => {
   }
 });
 for (const signal of ["SIGINT", "SIGTERM"])
-  process.on(signal, () =>
+  process.on(signal, () => {
+    nativePicker.dispose();
     server.close(() => {
       db.close();
       process.exit(0);
-    }),
-  );
+    });
+  });

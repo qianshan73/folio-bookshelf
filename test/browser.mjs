@@ -137,12 +137,21 @@ try {
     .click();
   await page.locator('[data-import-tab="note"]').click();
   await page.locator("#note-title").fill("前端新笔记");
+  await page.locator("#note-format").selectOption("js");
   await page.locator("#note-content").fill("# 新内容\n\n防止遗忘。");
   await page.locator("#import-submit").click();
   await page.waitForFunction(
     () => !document.querySelector("#import-dialog").open,
   );
   assert.equal(await page.locator(".book-card").count(), 10);
+  assert.equal(
+    await page
+      .locator(".book-card")
+      .filter({ hasText: "前端新笔记" })
+      .locator(".file-badge")
+      .textContent(),
+    "js",
+  );
   await page.locator('[data-action="list-view"]').click();
   assert.ok(await page.locator("#books.list-view").count());
   await page.locator('[data-action="shelf-view"]').click();
@@ -218,6 +227,66 @@ try {
     fullPage: true,
   });
   await page.locator('#settings-dialog [data-action="close-modal"]').click();
+  // Keep a pending native request open via a mock: background clicks must focus
+  // it, not switch import tabs. Cancel and retry must leave the form usable.
+  await page.setViewportSize({ width: 1440, height: 1080 });
+  let finishPicker,
+    opens = 0,
+    focuses = 0;
+  await page.route("**/api/dialog", async (route) => {
+    opens++;
+    await new Promise((resolve) => (finishPicker = () => resolve()));
+    await route.fulfill({ json: { paths: [], kind: "files" } });
+  });
+  await page.route("**/api/dialog/focus", async (route) => {
+    focuses++;
+    await route.fulfill({ json: { active: true } });
+  });
+  await page.route("**/api/dialog/cancel", async (route) => {
+    finishPicker?.();
+    await route.fulfill({ json: { active: true } });
+  });
+  await page
+    .getByRole("button", { name: "收进书柜", exact: true })
+    .first()
+    .click();
+  await page.locator('[data-import-tab="path"]').click();
+  await page.locator('[data-action="browse-import"]').click();
+  await page.waitForSelector(".native-picker-hint");
+  await page.locator('[data-import-tab="link"]').click();
+  await page.waitForTimeout(300);
+  assert.ok(focuses > 0);
+  assert.equal(opens, 1);
+  assert.equal(
+    await page.locator('[data-import-tab="path"]').getAttribute("class"),
+    "active",
+  );
+  await page.locator('[data-action="cancel-picker"]').click();
+  await page.waitForFunction(
+    () => !document.querySelector(".native-picker-hint"),
+  );
+  await page.locator('[data-action="browse-import"]').click();
+  await page.waitForSelector(".native-picker-hint");
+  assert.equal(opens, 2);
+  await page.locator('[data-action="cancel-picker"]').click();
+  await page.waitForFunction(
+    () => !document.querySelector(".native-picker-hint"),
+  );
+  await page.locator('[data-import-tab="note"]').click();
+  await page.locator("#note-format").selectOption("custom");
+  await page.locator("#note-custom-extension").fill("lua");
+  await page.locator("#note-title").fill("自定义格式");
+  await page.locator("#note-content").fill('print("自定义文本格式")');
+  await page.locator("#import-submit").click();
+  await page.waitForFunction(
+    () => !document.querySelector("#import-dialog").open,
+  );
+  await page.locator(".book-open").filter({ hasText: "自定义格式" }).click();
+  await page.waitForSelector(".code-reader");
+  assert.match(
+    await page.locator(".code-reader").textContent(),
+    /自定义文本格式/,
+  );
   assert.deepEqual(errors, []);
   console.log(
     "Browser QA passed: shelf, full-text search, read, rename, tags, reminders, covers, edit, import, trash/restore, drag-sort/archive, real move/undo, dark/mobile.",

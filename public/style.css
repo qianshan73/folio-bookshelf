@@ -1920,3 +1920,24 @@ a.secondary {
     height: 29px;
   }
 }
+.native-picker-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--green-soft);
+  color: var(--green);
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.native-picker-hint button {
+  flex-shrink: 0;
+  color: var(--green);
+}
+#note-custom-field label {
+  display: block;
+  margin: 12px 0 8px;
+  font-size: 12px;
+}

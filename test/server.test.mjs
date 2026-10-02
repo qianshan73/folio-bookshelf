@@ -377,6 +377,60 @@ test("complete backup, merge restore, idempotence and traversal validation", asy
     await once(other.p, "exit");
   }
 });
+test("pasted text selects extension, normalizes filename and indexes custom text formats", async () => {
+  for (const extension of ["txt", "js", "cpp", "lua"]) {
+    const r = await call("/api/note", "POST", {
+      title: "类型测试." + extension,
+      extension,
+      content: "粘贴选择检索词_" + extension,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.extension, extension);
+    assert.equal(r.data.file_name, "类型测试." + extension);
+    assert.equal(
+      (await call(`/api/books/${r.data.id}/content?text=1`)).data.text,
+      "粘贴选择检索词_" + extension,
+    );
+    assert.equal(
+      (
+        await call(`/api/books/${r.data.id}/content`, "PUT", {
+          content: "修改_" + extension,
+        })
+      ).status,
+      200,
+    );
+    assert.ok(
+      (
+        await call("/api/search?q=" + encodeURIComponent("修改_" + extension))
+      ).data.ids.includes(r.data.id),
+    );
+  }
+  assert.equal(
+    (
+      await call("/api/note", "POST", {
+        title: "bad",
+        extension: "../js",
+        content: "bad",
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await call("/api/note", "POST", {
+        title: "bad",
+        extension: "pdf",
+        content: "bad",
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await call("/api/dialog/state")).data.active, false);
+  assert.equal(
+    (await call("/api/dialog/focus", "POST", {})).data.active,
+    false,
+  );
+});
 test("state survives a complete server restart", async () => {
   child.kill();
   await once(child, "exit");

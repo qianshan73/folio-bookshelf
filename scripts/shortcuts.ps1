@@ -28,22 +28,15 @@ if (-not $DesktopDirectory) { $DesktopDirectory = [Environment]::GetFolderPath('
 if (-not $StartMenuDirectory) { $StartMenuDirectory = [Environment]::GetFolderPath('Programs') }
 $desktop = [IO.Path]::GetFullPath($DesktopDirectory)
 $programs = [IO.Path]::GetFullPath($StartMenuDirectory)
-$shell = New-Object -ComObject WScript.Shell
-$fileSystem = New-Object -ComObject Scripting.FileSystemObject
-Add-Type @'
-using System.Runtime.InteropServices;
-public static class FolioShortcutShell {
-    [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
-    public static extern void SHChangeNotify(uint change, uint flags, string path, System.IntPtr unused);
-}
-'@
+. (Join-Path $PSScriptRoot 'shortcut-link.ps1')
+$launcherIdentity = [Folio.ShortcutFile]::Canonical($launcher)
 
 function Test-OwnedShortcut([string]$File) {
     try {
-        $target = $shell.CreateShortcut($File).TargetPath
-        if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { return $false }
+        $target = [Folio.ShortcutFile]::Read($File).Target
+        if (-not $target -or -not [IO.Path]::IsPathRooted($target) -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { return $false }
         # Compare physical Windows file names, including 8.3 path aliases.
-        return $fileSystem.GetFile($target).ShortPath -eq $fileSystem.GetFile($launcher).ShortPath
+        return [Folio.ShortcutFile]::Canonical($target) -eq $launcherIdentity
     } catch { return $false }
 }
 function Get-OwnedShortcuts([string]$Directory) {
@@ -66,11 +59,11 @@ function Invoke-Shortcuts([string]$Choice, [string]$Operation) {
             foreach ($file in $owned) {
                 # Remove only this project's exact .lnk, never a target or a folder.
                 $full = [IO.Path]::GetFullPath($file.FullName)
-                if ([IO.Path]::GetDirectoryName($full) -ne $directory -or -not (Test-OwnedShortcut $full)) {
+                if ([Folio.ShortcutFile]::Canonical([IO.Path]::GetDirectoryName($full)) -ne [Folio.ShortcutFile]::Canonical($directory) -or -not (Test-OwnedShortcut $full)) {
                     throw '快捷方式位置发生变化，未执行移除。'
                 }
                 Remove-Item -LiteralPath $full
-                [FolioShortcutShell]::SHChangeNotify(4,5,$full,[IntPtr]::Zero)
+                [Folio.ShortcutFile]::NotifyRemoved($full)
                 $answer.removed += $full
             }
             if (-not $owned.Count) { $answer.skipped += $directory }
@@ -89,14 +82,7 @@ function Invoke-Shortcuts([string]$Choice, [string]$Operation) {
                 $n++
             }
         }
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $launcher
-        $shortcut.WorkingDirectory = $root
-        $shortcut.Description = '拾页 Folio｜本地文件与网络资料管理书柜：双击启动，已运行时直接打开现有页面。'
-        $shortcut.IconLocation = "$icon,0"
-        $shortcut.WindowStyle = 7
-        $shortcut.Save()
-        [FolioShortcutShell]::SHChangeNotify(0x2000,5,$shortcutPath,[IntPtr]::Zero)
+        [Folio.ShortcutFile]::Create($shortcutPath,$launcher,$root,$icon,0,'拾页 Folio｜本地文件与网络资料管理书柜：双击启动，已运行时直接打开现有页面。',7)
         if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -or -not (Test-OwnedShortcut $shortcutPath)) {
             throw '快捷方式未能正确保存，请检查此位置是否可写。'
         }
@@ -191,7 +177,4 @@ try {
     $form.AcceptButton = $create
     try { $form.ShowDialog() | Out-Null }
     finally { $picture.Image.Dispose(); $form.Icon.Dispose(); $form.Dispose() }
-} finally {
-    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($fileSystem) | Out-Null
-    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
-}
+} catch { throw }

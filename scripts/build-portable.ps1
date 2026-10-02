@@ -29,6 +29,7 @@ foreach ($name in @('public','lib','server.mjs','start.cmd','创建快捷方式.
 New-Item -ItemType Directory -Path (Join-Path $staging 'scripts') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'scripts/file-picker.ps1') -Destination (Join-Path $staging 'scripts/file-picker.ps1')
 Copy-Item -LiteralPath (Join-Path $root 'scripts/shortcuts.ps1') -Destination (Join-Path $staging 'scripts/shortcuts.ps1')
+Copy-Item -LiteralPath (Join-Path $root 'scripts/shortcut-link.ps1') -Destination (Join-Path $staging 'scripts/shortcut-link.ps1')
 New-Item -ItemType Directory -Path (Join-Path $staging 'docs/screenshots') -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $root 'docs') -File -Filter '*.md' | Copy-Item -Destination (Join-Path $staging 'docs')
 foreach ($name in @('bookshelf.png','reader.png','dark.png','mobile.png','standalone-reader.png','file-organizer.png')) {

@@ -105,7 +105,7 @@ test(
     assert.deepEqual(second.created, first.created);
     assert.equal((await fs.readdir(desktop)).length, 1);
     const meta = await ps(
-      `$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut(${quote(first.created[0])}); @{target=$l.TargetPath;work=$l.WorkingDirectory;icon=$l.IconLocation;style=$l.WindowStyle} | ConvertTo-Json -Compress`,
+      `. ${quote(path.join(root, "scripts", "shortcut-link.ps1"))}; $l=[Folio.ShortcutFile]::Read(${quote(first.created[0])}); @{target=$l.Target;work=$l.WorkingDirectory;icon=$l.Icon;style=$l.WindowStyle} | ConvertTo-Json -Compress`,
     );
     assert.equal(
       meta.target.toLowerCase(),
@@ -135,7 +135,7 @@ test(
     await fs.mkdir(desktop);
     const foreign = path.join(desktop, "拾页书柜.lnk");
     await ps(
-      `$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut(${quote(foreign)}); $l.TargetPath=Join-Path $env:SystemRoot 'System32\\cmd.exe'; $l.Description='foreign fixture'; $l.Save(); @{ok=$true}|ConvertTo-Json -Compress`,
+      `. ${quote(path.join(root, "scripts", "shortcut-link.ps1"))}; [Folio.ShortcutFile]::Create(${quote(foreign)},(Join-Path $env:SystemRoot 'System32\\cmd.exe'),$env:SystemRoot,(Join-Path $env:SystemRoot 'System32\\shell32.dll'),4,'foreign fixture',1); @{ok=$true}|ConvertTo-Json -Compress`,
     );
     const before = await fs.readFile(foreign);
     const r = await invoke("Desktop", desktop, programs);
